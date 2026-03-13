@@ -160,7 +160,7 @@ async def run():
 
     def audio_callback(indata, frames, time_info, status):
         if is_recording:
-            audio_buffer.append(bytes(indata))
+            audio_buffer.append(indata.tobytes())
 
     stream = sd.InputStream(
         samplerate=mic_rate,
@@ -204,30 +204,44 @@ async def run():
     print(f"Audio: {len(pcm_data)} bytes ({duration:.1f}s at {mic_rate} Hz)")
 
     # Stream to smallest.ai
-    print("Sending audio to smallest.ai...\n")
+    print(f"Sending audio to smallest.ai...")
+    print(f"  URL: {ws_url}")
+    print(f"  Payload: {len(pcm_data)} bytes\n")
 
     try:
         async with websockets.connect(ws_url, additional_headers=headers) as ws:
+            print("WebSocket connected. Uploading audio...")
+
             # Send audio in 4096-byte chunks
             chunk_size = 4096
+            sent = 0
             for i in range(0, len(pcm_data), chunk_size):
                 chunk = pcm_data[i : i + chunk_size]
                 await ws.send(chunk)
+                sent += len(chunk)
                 await asyncio.sleep(0.01)
+
+            print(f"Sent {sent} bytes. Sending finalize signal...")
 
             # Signal end of audio
             await ws.send(json.dumps({"type": "finalize"}))
+            print("Waiting for transcription results...\n")
 
             # Receive transcripts
             async for message in ws:
                 try:
                     data = json.loads(message)
+                    print(f"  [DEBUG RAW] {json.dumps(data)}")
+
                     transcript = data.get("transcript", "").strip()
                     is_final = data.get("is_final", False)
                     is_last = data.get("is_last", False)
                     lang = data.get("language", "unknown")
 
                     if not transcript:
+                        if is_last:
+                            print("\nSession complete (no transcript).")
+                            break
                         continue
 
                     if not is_final:
