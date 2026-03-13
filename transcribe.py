@@ -80,8 +80,8 @@ async def main():
     print("Transcribing...")
     print(f"  API key: {API_KEY[:8]}...{API_KEY[-4:]}" if API_KEY else "  API key: MISSING!")
 
-    ws_url = f"wss://api.smallest.ai/waves/v1/lightning/get_text?{urlencode({
-        'language': 'multi',
+    ws_url = f"wss://api.smallest.ai/waves/v1/pulse/get_text?{urlencode({
+        'language': 'en',
         'encoding': 'linear16',
         'sample_rate': str(SAMPLE_RATE),
     })}"
@@ -100,17 +100,23 @@ async def main():
             chunks += 1
         print(f"  Sent {chunks} audio chunks.")
 
-        await ws.send(json.dumps({"type": "finalize"}))
+        await ws.send("finalize")
         print("  Sent finalize. Waiting for response...")
 
-        async for msg in ws:
-            print(f"  [API] {msg[:200]}")
-            data = json.loads(msg)
-            text = data.get("transcript", "").strip()
-            if data.get("is_final") and text:
-                transcript = data.get("full_transcript", text)
-            if data.get("is_last"):
-                break
+        try:
+            while True:
+                msg = await asyncio.wait_for(ws.recv(), timeout=10)
+                print(f"  [API] {msg[:200]}")
+                data = json.loads(msg)
+                text = data.get("transcript", "").strip()
+                if data.get("is_final") and text:
+                    transcript = data.get("full_transcript", text)
+                if data.get("is_last"):
+                    break
+        except asyncio.TimeoutError:
+            print("  Timed out waiting for response (10s).")
+        except websockets.exceptions.ConnectionClosed as e:
+            print(f"  Connection closed: {e}")
 
     # Step 4: Print result
     if transcript:
