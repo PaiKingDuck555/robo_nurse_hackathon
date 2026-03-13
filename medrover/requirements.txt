@@ -1,0 +1,7 @@
+anthropic
+opencv-python
+pyaudio
+easyocr
+scrapegraph-py
+requests
+pymongo
