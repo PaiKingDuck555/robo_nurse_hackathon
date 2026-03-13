@@ -20,7 +20,6 @@ if not API_KEY:
     raise RuntimeError("Set SMALLEST_API_KEY in your .env file")
 
 TARGET_LANGUAGE = os.getenv("TARGET_LANGUAGE", "english")
-
 CHANNELS = 1
 
 transcript_entries = []
@@ -32,39 +31,30 @@ def get_output_path():
 
 
 def translate_text(text, source_lang="auto"):
-    """Translate text to TARGET_LANGUAGE via Google Translate."""
     translator = GoogleTranslator(source=source_lang, target=TARGET_LANGUAGE)
     return translator.translate(text)
 
 
 def save_transcript(path):
-    """Write all collected transcript entries to a markdown file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         f.write(f"# Transcript — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         f.write(f"**Target language:** {TARGET_LANGUAGE}\n\n")
         f.write("---\n\n")
-
         for entry in transcript_entries:
             ts = entry["time"]
             orig = entry["original"]
             lang = entry.get("language", "unknown")
             translated = entry.get("translated", "")
-
             f.write(f"### [{ts}] (detected: {lang})\n\n")
             f.write(f"**Original:** {orig}\n\n")
             if translated and translated != orig:
                 f.write(f"**{TARGET_LANGUAGE}:** {translated}\n\n")
             f.write("---\n\n")
-
     print(f"\nTranscript saved to {path}")
 
 
-# ──────────────────────────────────────────────
-# USB AUDIO HELPERS (from translator project)
-# ──────────────────────────────────────────────
 def find_usb_mic():
-    """Find USB mic device index, or fall back to default input."""
     devices = sd.query_devices()
     for i, d in enumerate(devices):
         if d["max_input_channels"] > 0 and "USB" in d["name"]:
@@ -76,32 +66,23 @@ def find_usb_mic():
 
 
 def get_mic_native_rate(mic_index):
-    """Probe the USB mic's native sample rate."""
     info = sd.query_devices(mic_index)
     default_rate = int(info["default_samplerate"])
-
     try:
         sd.check_input_settings(device=mic_index, samplerate=default_rate)
         return default_rate
     except Exception:
         pass
-
     for rate in [48000, 44100, 32000, 22050, 16000, 8000]:
         try:
             sd.check_input_settings(device=mic_index, samplerate=rate)
             return rate
         except Exception:
             continue
-
     return default_rate
 
 
-
-# ──────────────────────────────────────────────
-# KEYBOARD INPUT (from translator project)
-# ──────────────────────────────────────────────
 def get_key():
-    """Read a single keypress without echo."""
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     try:
@@ -113,7 +94,6 @@ def get_key():
 
 
 def wait_for_key(target="r"):
-    """Block until user presses target key."""
     while True:
         ch = get_key()
         if ch == target:
@@ -122,9 +102,6 @@ def wait_for_key(target="r"):
             raise KeyboardInterrupt
 
 
-# ──────────────────────────────────────────────
-# MAIN
-# ──────────────────────────────────────────────
 async def run():
     mic_index, mic_name = find_usb_mic()
     if mic_index is None:
@@ -132,7 +109,7 @@ async def run():
         return
 
     mic_rate = get_mic_native_rate(mic_index)
-    block_size = int(mic_rate * 0.1)  # ~100ms chunks
+    block_size = int(mic_rate * 0.05)  # 50ms chunks for low latency
 
     print(f"Mic: [{mic_index}] {mic_name}")
     print(f"Sample rate: {mic_rate} Hz")
@@ -150,129 +127,118 @@ async def run():
 
     print("\nPress [r] to start recording")
     print("Press [q] to quit\n")
-
     wait_for_key("r")
-    print("--- Recording started. Speak now. Press [r] to stop. ---\n")
 
-    # Collect audio in callback
-    audio_buffer = []
-    is_recording = True
-
-    def audio_callback(indata, frames, time_info, status):
-        if is_recording:
-            audio_buffer.append(indata.tobytes())
-
-    stream = sd.InputStream(
-        samplerate=mic_rate,
-        channels=CHANNELS,
-        blocksize=block_size,
-        device=mic_index,
-        dtype="int16",
-        callback=audio_callback,
-    )
-    stream.start()
-
-    # Wait for stop key in a thread
-    stop_event = threading.Event()
-
-    def key_listener():
-        wait_for_key("r")
-        stop_event.set()
-
-    key_thread = threading.Thread(target=key_listener, daemon=True)
-    key_thread.start()
-
-    # Wait until user presses 'r' again
-    while not stop_event.is_set():
-        await asyncio.sleep(0.05)
-
-    is_recording = False
-    stream.stop()
-    stream.close()
-
-    chunk_count = len(audio_buffer)
-    duration = chunk_count * block_size / mic_rate
-    print(f"\n--- Recording stopped. Captured {duration:.1f}s of audio. ---\n")
-
-    if chunk_count == 0:
-        print("No audio captured.")
-        return
-
-    # Already recorded as int16 PCM — just concatenate the raw bytes
-    pcm_data = b"".join(audio_buffer)
-    audio_buffer.clear()
-    print(f"Audio: {len(pcm_data)} bytes ({duration:.1f}s at {mic_rate} Hz)")
-
-    # Stream to smallest.ai
-    print(f"Sending audio to smallest.ai...")
-    print(f"  URL: {ws_url}")
-    print(f"  Payload: {len(pcm_data)} bytes\n")
+    print("Connecting to smallest.ai...")
 
     try:
         async with websockets.connect(ws_url, additional_headers=headers) as ws:
-            print("WebSocket connected. Uploading audio...")
+            print("Connected. Speak now! Press [r] to stop.\n")
 
-            # Send audio in 4096-byte chunks
-            chunk_size = 4096
-            sent = 0
-            for i in range(0, len(pcm_data), chunk_size):
-                chunk = pcm_data[i : i + chunk_size]
-                await ws.send(chunk)
-                sent += len(chunk)
-                await asyncio.sleep(0.01)
+            stop_event = threading.Event()
+            audio_queue = asyncio.Queue()
 
-            print(f"Sent {sent} bytes. Sending finalize signal...")
+            def audio_callback(indata, frames, time_info, status):
+                if not stop_event.is_set():
+                    audio_queue.put_nowait(indata.tobytes())
 
-            # Signal end of audio
-            await ws.send(json.dumps({"type": "finalize"}))
-            print("Waiting for transcription results...\n")
+            stream = sd.InputStream(
+                samplerate=mic_rate,
+                channels=CHANNELS,
+                blocksize=block_size,
+                device=mic_index,
+                dtype="int16",
+                callback=audio_callback,
+            )
+            stream.start()
 
-            # Receive transcripts
-            async for message in ws:
-                try:
-                    data = json.loads(message)
-                    print(f"  [DEBUG RAW] {json.dumps(data)}")
+            def key_listener():
+                wait_for_key("r")
+                stop_event.set()
 
-                    transcript = data.get("transcript", "").strip()
-                    is_final = data.get("is_final", False)
-                    is_last = data.get("is_last", False)
-                    lang = data.get("language", "unknown")
+            key_thread = threading.Thread(target=key_listener, daemon=True)
+            key_thread.start()
 
-                    if not transcript:
-                        if is_last:
-                            print("\nSession complete (no transcript).")
-                            break
-                        continue
-
-                    if not is_final:
-                        print(f"\r  [partial] {transcript}", end="", flush=True)
-                        continue
-
-                    print(f"\r{' ' * 100}\r", end="")
-
-                    ts = datetime.now().strftime("%H:%M:%S")
-                    print(f"[{ts}] ({lang}) {transcript}")
-
-                    translated = ""
+            async def send_audio():
+                """Stream audio to WebSocket in real-time."""
+                while not stop_event.is_set():
                     try:
-                        translated = translate_text(transcript)
-                        print(f"  [DEBUG] INPUT:  ({lang}) {transcript}")
-                        print(f"  [DEBUG] OUTPUT: ({TARGET_LANGUAGE}) {translated}")
+                        data = await asyncio.wait_for(audio_queue.get(), timeout=0.1)
+                        await ws.send(data)
+                    except asyncio.TimeoutError:
+                        continue
                     except Exception as e:
-                        print(f"  [DEBUG] Translation failed: {e}")
-
-                    transcript_entries.append({
-                        "time": ts,
-                        "original": transcript,
-                        "language": lang,
-                        "translated": translated,
-                    })
-
-                    if is_last:
+                        print(f"Send error: {e}")
                         break
 
-                except json.JSONDecodeError:
-                    pass
+                # Drain remaining audio
+                while not audio_queue.empty():
+                    try:
+                        data = audio_queue.get_nowait()
+                        await ws.send(data)
+                    except Exception:
+                        break
+
+                await ws.send(json.dumps({"type": "finalize"}))
+                print("\n--- Recording stopped. Waiting for final results... ---")
+
+            async def receive_transcripts():
+                """Receive transcripts in real-time."""
+                async for message in ws:
+                    try:
+                        data = json.loads(message)
+                        transcript = data.get("transcript", "").strip()
+                        is_final = data.get("is_final", False)
+                        is_last = data.get("is_last", False)
+                        lang = data.get("language", "unknown")
+
+                        if not transcript:
+                            if is_last:
+                                break
+                            continue
+
+                        if not is_final:
+                            print(f"\r  [partial] {transcript}", end="", flush=True)
+                            continue
+
+                        print(f"\r{' ' * 100}\r", end="")
+
+                        ts = datetime.now().strftime("%H:%M:%S")
+                        print(f"[{ts}] ({lang}) {transcript}")
+
+                        translated = ""
+                        try:
+                            translated = translate_text(transcript)
+                            print(f"  [DEBUG] INPUT:  ({lang}) {transcript}")
+                            print(f"  [DEBUG] OUTPUT: ({TARGET_LANGUAGE}) {translated}")
+                        except Exception as e:
+                            print(f"  [DEBUG] Translation failed: {e}")
+
+                        transcript_entries.append({
+                            "time": ts,
+                            "original": transcript,
+                            "language": lang,
+                            "translated": translated,
+                        })
+
+                        if is_last:
+                            break
+
+                    except json.JSONDecodeError:
+                        pass
+
+            sender = asyncio.create_task(send_audio())
+            receiver = asyncio.create_task(receive_transcripts())
+
+            done, pending = await asyncio.wait(
+                [sender, receiver],
+                return_when=asyncio.ALL_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+
+            stream.stop()
+            stream.close()
 
     except websockets.ConnectionClosed as e:
         print(f"\nConnection closed: {e.code} - {e.reason}")
