@@ -96,6 +96,7 @@ async def main():
         # Wait for result
         async for msg in ws:
             data = json.loads(msg)
+            print(f"  [API] {json.dumps(data)}")
             text = data.get("transcript", "").strip()
             if data.get("is_final") and text:
                 transcript = data.get("full_transcript", text)
