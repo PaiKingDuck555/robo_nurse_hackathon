@@ -136,7 +136,7 @@ Return as a JSON array of objects. Return at most 5 results. If a field is unkno
   return parseResults(items, medicine, localCurrency);
 }
 
-// Fallback: OpenAI web search
+// Fallback: OpenAI
 async function lookupViaOpenAI(
   medicine: string,
   zipcode: string,
@@ -186,6 +186,27 @@ Use real pharmacy chains that exist in ${country} (e.g. Farmacias Guadalajara, F
   return parseResults(items, medicine, localCurrency);
 }
 
+function priceUnavailableResult(medicine: string, localCurrency: string): MedicinePriceResult {
+  return {
+    medicine,
+    pharmacy: "Lookup unavailable",
+    price: "Price unavailable",
+    currency: localCurrency,
+    address: "",
+    distance: "",
+    available: false,
+    mapLink: "",
+    phoneNumber: "",
+    openingHours: "",
+    prescriptionRequired: false,
+    genericAlternative: "",
+    genericPrice: "",
+    deliveryAvailable: false,
+    pharmacyType: "",
+    dosageMatch: "",
+  };
+}
+
 // Main export: tries ScrapeGraph first, falls back to OpenAI
 export async function lookupMedicinePrice(
   medicine: string,
@@ -194,37 +215,16 @@ export async function lookupMedicinePrice(
 ): Promise<MedicinePriceResult[]> {
   const localCurrency = getLocalCurrency(country);
 
-  // Try ScrapeGraph first
   try {
     return await lookupViaScrapeGraph(medicine, zipcode, country, localCurrency);
   } catch (err: any) {
     console.warn(`[PriceLookup] ScrapeGraph failed for ${medicine}: ${err.message}`);
   }
 
-  // Fallback to OpenAI
   try {
     return await lookupViaOpenAI(medicine, zipcode, country, localCurrency);
   } catch (err: any) {
     console.error(`[PriceLookup] OpenAI fallback also failed for ${medicine}: ${err.message}`);
-    return [
-      {
-        medicine,
-        pharmacy: "Lookup unavailable",
-        price: "Price unavailable",
-        currency: localCurrency,
-        address: "",
-        distance: "",
-        available: false,
-        mapLink: "",
-        phoneNumber: "",
-        openingHours: "",
-        prescriptionRequired: false,
-        genericAlternative: "",
-        genericPrice: "",
-        deliveryAvailable: false,
-        pharmacyType: "",
-        dosageMatch: "",
-      },
-    ];
+    return [priceUnavailableResult(medicine, localCurrency)];
   }
 }

@@ -1,34 +1,52 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  getPatientById,
-  getSessionsForPatient,
-  upsertPrescription,
-} from "@/lib/dummy-data";
+import { upsertPrescription } from "@/lib/dummy-data";
 import { generateDoctorNote } from "@/lib/claude";
+import {
+  fetchWaitingPatients,
+  transformToPatient,
+  transformToIntakeSession,
+} from "@/lib/railway";
 
 export async function POST(request: NextRequest) {
   const { patientId } = await request.json();
 
   if (!patientId) {
-    return NextResponse.json({ error: "patientId is required" }, { status: 400 });
-  }
-
-  const patient = getPatientById(patientId);
-  if (!patient) {
-    return NextResponse.json({ error: "Patient not found" }, { status: 404 });
-  }
-
-  const { intake, relay } = getSessionsForPatient(patientId);
-  if (!intake) {
-    return NextResponse.json({ error: "No completed intake session found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "patientId is required" },
+      { status: 400 }
+    );
   }
 
   try {
-    // Use relay session transcript if available, otherwise fall back to
-    // relay transcript stored on the intake session (from live video call)
-    const relayTranscript = relay?.relayTranscript?.length
-      ? relay.relayTranscript
-      : intake.relayTranscript || [];
+    // Fetch all waiting patients and find the one matching patientId
+    const waiting = await fetchWaitingPatients();
+    const railwaySession = waiting.find((s) => s.session_id === patientId);
+
+    if (!railwaySession) {
+      return NextResponse.json(
+        { error: "Patient not found in Railway" },
+        { status: 404 }
+      );
+    }
+
+    const patient = transformToPatient(railwaySession);
+    const intake = transformToIntakeSession(railwaySession);
+
+    // Build relay transcript from the intake conversation_english
+    // (the nurse-patient intake conversation acts as context)
+    const intakeConversationAsTranscript = railwaySession.conversation_english.map(
+      (turn, i) => ({
+        speaker: turn.role === "nurse" ? "doctor" : "patient",
+        textOriginal:
+          railwaySession.conversation_native[i]?.text || turn.text,
+        textTranslated: turn.text,
+      })
+    );
+
+    // Use relay transcript from the session if available, otherwise use intake conversation
+    const relayTranscript = intake.relayTranscript?.length
+      ? intake.relayTranscript
+      : intakeConversationAsTranscript;
 
     const note = await generateDoctorNote(
       intake.clinicalSummary || "",
@@ -40,7 +58,6 @@ export async function POST(request: NextRequest) {
     const prescription = upsertPrescription({
       patientId,
       intakeSessionId: intake._id,
-      relaySessionId: relay?._id,
       ...note,
       status: "draft",
     });
