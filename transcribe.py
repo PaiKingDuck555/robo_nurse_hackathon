@@ -100,7 +100,7 @@ async def main():
             chunks += 1
         print(f"  Sent {chunks} audio chunks.")
 
-        await ws.send("finalize")
+        await ws.send(json.dumps({"type": "finalize"}))
         print("  Sent finalize. Waiting for response...")
 
         try:
