@@ -4,12 +4,11 @@ import json
 import tty
 import termios
 import asyncio
+import struct
 import threading
 from datetime import datetime
 from urllib.parse import urlencode
-from math import gcd
 
-import numpy as np
 import sounddevice as sd
 import websockets
 from deep_translator import GoogleTranslator
@@ -24,7 +23,6 @@ if not API_KEY:
 TARGET_LANGUAGE = os.getenv("TARGET_LANGUAGE", "english")
 
 CHANNELS = 1
-SEND_RATE = 16000  # smallest.ai expects 16kHz
 
 transcript_entries = []
 
@@ -99,16 +97,6 @@ def get_mic_native_rate(mic_index):
     return default_rate
 
 
-def resample_audio(audio, from_rate, to_rate):
-    """Resample audio using scipy-style polyphase resampling."""
-    if from_rate == to_rate:
-        return audio
-    from scipy.signal import resample_poly
-    divisor = gcd(from_rate, to_rate)
-    up = to_rate // divisor
-    down = from_rate // divisor
-    return resample_poly(audio, up, down).astype(np.float32)
-
 
 # ──────────────────────────────────────────────
 # KEYBOARD INPUT (from translator project)
@@ -148,16 +136,12 @@ async def run():
     block_size = int(mic_rate * 0.1)  # ~100ms chunks
 
     print(f"Mic: [{mic_index}] {mic_name}")
-    print(f"Native rate: {mic_rate} Hz", end="")
-    if mic_rate != SEND_RATE:
-        print(f" -> will resample to {SEND_RATE} Hz for API")
-    else:
-        print()
+    print(f"Sample rate: {mic_rate} Hz")
 
     ws_params = {
         "language": "multi",
         "encoding": "linear16",
-        "sample_rate": str(SEND_RATE),
+        "sample_rate": str(mic_rate),
         "word_timestamps": "false",
         "full_transcript": "true",
     }
@@ -215,16 +199,14 @@ async def run():
         print("No audio captured.")
         return
 
-    # Concatenate and resample to 16kHz for the API
-    full_audio = np.concatenate(audio_buffer, axis=0).flatten()
+    # Convert float32 [-1,1] chunks to int16 PCM bytes
+    pcm_frames = []
+    for chunk in audio_buffer:
+        for sample in chunk.flatten():
+            val = max(-32768, min(32767, int(sample * 32767)))
+            pcm_frames.append(struct.pack("<h", val))
     audio_buffer.clear()
-
-    if mic_rate != SEND_RATE:
-        print(f"Resampling {mic_rate} Hz -> {SEND_RATE} Hz...")
-        full_audio = resample_audio(full_audio, mic_rate, SEND_RATE)
-
-    # Convert float32 [-1,1] to int16 PCM bytes
-    pcm_data = (full_audio * 32767).astype(np.int16).tobytes()
+    pcm_data = b"".join(pcm_frames)
 
     # Stream to smallest.ai
     print("Sending audio to smallest.ai...\n")
