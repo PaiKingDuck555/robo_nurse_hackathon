@@ -1,4 +1,6 @@
-pyaudio
+sounddevice
+scipy
+numpy
 websockets
 deep-translator
 python-dotenv
