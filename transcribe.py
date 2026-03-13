@@ -22,6 +22,40 @@ API_KEY = os.getenv("SMALLEST_API_KEY")
 SAMPLE_RATE = 44100
 
 
+def find_input_device():
+    """List all audio devices, find USB mic, return (index, native_rate)."""
+    devices = sd.query_devices()
+    default_in, _ = sd.default.device
+
+    print("\nAudio devices:")
+    inputs = []
+    for i, d in enumerate(devices):
+        if d['max_input_channels'] > 0:
+            tag = " <-- DEFAULT" if i == default_in else ""
+            print(f"  [{i}] {d['name']} ({d['max_input_channels']}ch, {int(d['default_samplerate'])}Hz){tag}")
+            inputs.append(i)
+
+    if not inputs:
+        print("  NO INPUT DEVICES FOUND! Plug in a USB mic.")
+        return None, SAMPLE_RATE
+
+    usb_idx = None
+    for i in inputs:
+        name = devices[i]['name'].lower()
+        if 'usb' in name:
+            usb_idx = i
+            break
+
+    chosen = usb_idx if usb_idx is not None else default_in
+    if chosen is None:
+        chosen = inputs[0]
+
+    info = sd.query_devices(chosen)
+    rate = int(info['default_samplerate'])
+    print(f"\n  Using: [{chosen}] {info['name']} @ {rate}Hz")
+    return chosen, rate
+
+
 def get_key():
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
@@ -42,8 +76,17 @@ def wait_for_r():
 
 
 async def main():
+    # Step 0: Detect mic
+    mic_idx, mic_rate = find_input_device()
+    if mic_idx is None:
+        print("No microphone found. Exiting.")
+        return
+
+    global SAMPLE_RATE
+    SAMPLE_RATE = mic_rate
+
     # Step 1: Wait for R to start
-    print("Press [r] to start recording...")
+    print("\nPress [r] to start recording...")
     wait_for_r()
 
     # Step 2: Record audio until R is pressed again
@@ -52,11 +95,14 @@ async def main():
     stop = threading.Event()
 
     def callback(indata, frames, time_info, status):
+        if status:
+            print(f"  [audio status] {status}")
         if not stop.is_set():
             audio_chunks.append(indata.tobytes())
 
     stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
-                            blocksize=2205, dtype="int16", callback=callback)
+                            blocksize=2205, dtype="int16",
+                            device=mic_idx, callback=callback)
     stream.start()
 
     def key_listener():
@@ -79,6 +125,16 @@ async def main():
     if not pcm_data:
         print("No audio captured.")
         return
+
+    import numpy as np
+    samples = np.frombuffer(pcm_data, dtype=np.int16)
+    peak = int(np.max(np.abs(samples)))
+    rms = int(np.sqrt(np.mean(samples.astype(np.float64) ** 2)))
+    print(f"  Audio check: {len(samples)} samples, peak={peak}, rms={rms}")
+    if peak < 100:
+        print("  WARNING: Audio is nearly silent! Mic may not be working.")
+    else:
+        print(f"  Audio looks good (peak {peak}/32767).")
 
     # Step 3: Send to smallest.ai and get transcription
     print("=" * 60)
