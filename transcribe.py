@@ -4,7 +4,7 @@ import json
 import tty
 import termios
 import asyncio
-import threading
+import ctypes
 from datetime import datetime
 from urllib.parse import urlencode
 
@@ -14,6 +14,15 @@ from deep_translator import GoogleTranslator
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Suppress ALSA/JACK error messages on Linux
+try:
+    asound = ctypes.cdll.LoadLibrary("libasound.so.2")
+    c_error_handler = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_int,
+                                        ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p)
+    asound.snd_lib_error_set_handler(c_error_handler(lambda *_: None))
+except OSError:
+    pass
 
 API_KEY = os.getenv("SMALLEST_API_KEY")
 if not API_KEY:
@@ -36,25 +45,7 @@ WS_PARAMS = {
 WS_URL = f"wss://api.smallest.ai/waves/v1/lightning/get_text?{urlencode(WS_PARAMS)}"
 
 transcript_entries = []
-
-
-def get_key():
-    """Read a single keypress (Linux/Pi)."""
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        return sys.stdin.read(1)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
-
-
-def wait_for_r():
-    """Block until user presses 'r' or 'R'."""
-    while True:
-        key = get_key()
-        if key.lower() == "r":
-            return
+_original_termios = None
 
 
 def get_output_path():
@@ -92,7 +83,7 @@ def save_transcript(path):
 
 
 def find_usb_input_device():
-    """Find USB PnP mic index, or first input device if not found."""
+    """Find USB mic index, or first input device if not found."""
     audio = pyaudio.PyAudio()
     for i in range(audio.get_device_count()):
         info = audio.get_device_info_by_index(i)
@@ -108,26 +99,36 @@ def find_usb_input_device():
     return None
 
 
-def list_audio_devices():
-    audio = pyaudio.PyAudio()
-    print("Available audio input devices:")
-    for i in range(audio.get_device_count()):
-        info = audio.get_device_info_by_index(i)
-        if info["maxInputChannels"] > 0:
-            print(f"  [{i}] {info['name']} (channels: {info['maxInputChannels']}, rate: {int(info['defaultSampleRate'])})")
-    audio.terminate()
-    print()
+def enable_raw_stdin():
+    """Switch stdin to raw mode so single keypresses are detected."""
+    global _original_termios
+    fd = sys.stdin.fileno()
+    _original_termios = termios.tcgetattr(fd)
+    tty.setcbreak(fd)
+
+
+def restore_stdin():
+    """Restore original terminal settings."""
+    if _original_termios:
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _original_termios)
+
+
+def wait_for_key(target="r"):
+    """Block until user presses target key. Does not echo."""
+    while True:
+        ch = sys.stdin.read(1)
+        if ch.lower() == target:
+            return
 
 
 async def run():
-    list_audio_devices()
-
     device_index = find_usb_input_device()
     if device_index is None:
         print("No audio input device found.")
         return
 
     audio = pyaudio.PyAudio()
+    dev_name = audio.get_device_info_by_index(device_index)["name"]
     try:
         mic = audio.open(
             input=True,
@@ -137,31 +138,30 @@ async def run():
             format=FORMAT,
             rate=SAMPLE_RATE,
         )
-        print(f"Using mic at device index {device_index}.\n")
+        print(f"Mic ready: [{device_index}] {dev_name}")
     except Exception as e:
         print(f"Failed to open microphone: {e}")
-        print("Make sure a USB microphone or audio device is connected.")
         audio.terminate()
         return
 
     output_path = get_output_path()
     headers = {"Authorization": f"Bearer {API_KEY}"}
 
-    print(f"Connecting to smallest.ai ({WS_PARAMS['language']} mode)...")
-    print(f"Sample rate: {SAMPLE_RATE} Hz")
-    print("Press 'r' to start recording...")
-    wait_for_r()
-    print("\nRecording. Speak now. Press 'r' to stop.\n")
+    enable_raw_stdin()
 
     try:
-        async with websockets.connect(WS_URL, additional_headers=headers) as ws:
-            print("Connected to smallest.ai STT WebSocket.\n")
+        print(f"Sample rate: {SAMPLE_RATE} Hz | Language: auto-detect")
+        print("Press 'r' to START recording...")
+        wait_for_key("r")
+        print("\n--- Recording started. Speak now. Press 'r' to STOP. ---\n")
 
+        async with websockets.connect(WS_URL, additional_headers=headers) as ws:
             stop = asyncio.Event()
 
-            async def wait_for_r_stop():
+            async def wait_for_stop():
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, wait_for_r)
+                await loop.run_in_executor(None, wait_for_key, "r")
+                print("\n--- Recording stopped. ---")
                 stop.set()
 
             async def send_audio():
@@ -171,6 +171,8 @@ async def run():
                         data = await loop.run_in_executor(
                             None, lambda: mic.read(CHUNK_SIZE, exception_on_overflow=False)
                         )
+                        if stop.is_set():
+                            break
                         await ws.send(data)
                     except Exception as e:
                         if not stop.is_set():
@@ -179,6 +181,7 @@ async def run():
 
                 try:
                     await ws.send(json.dumps({"type": "finalize"}))
+                    await asyncio.sleep(2)
                 except Exception:
                     pass
 
@@ -219,7 +222,6 @@ async def run():
                         })
 
                         if is_last:
-                            print("\nSession complete.")
                             stop.set()
                             break
 
@@ -228,17 +230,21 @@ async def run():
 
             sender = asyncio.create_task(send_audio())
             receiver = asyncio.create_task(receive_transcripts())
-            r_waiter = asyncio.create_task(wait_for_r_stop())
+            stopper = asyncio.create_task(wait_for_stop())
 
-            await asyncio.gather(sender, receiver, r_waiter)
+            done, pending = await asyncio.wait(
+                [sender, receiver, stopper],
+                return_when=asyncio.FIRST_EXCEPTION,
+            )
+            for task in pending:
+                task.cancel()
 
     except websockets.ConnectionClosed as e:
         print(f"\nConnection closed: {e.code} - {e.reason}")
-    except KeyboardInterrupt:
-        print("\n\nStopping...")
     except Exception as e:
         print(f"\nError: {e}")
     finally:
+        restore_stdin()
         if mic.is_active():
             mic.stop_stream()
         mic.close()
@@ -255,4 +261,5 @@ if __name__ == "__main__":
     try:
         asyncio.run(run())
     except KeyboardInterrupt:
+        restore_stdin()
         print("\nInterrupted.")
