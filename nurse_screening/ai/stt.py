@@ -1,73 +1,58 @@
 """
 ai/stt.py
 
-Speech-to-text via ElevenLabs Scribe (primary).
-Fallback: smallest.ai Pulse → on-device Whisper.
+Speech-to-text via smallest.ai Pulse (primary).
+Fallback: on-device Whisper.
 
-ElevenLabs Scribe returns the transcript plus the detected language code,
-which we log so the system can confirm the patient is speaking the expected language.
+Key API details:
+  - Body: raw audio bytes as application/octet-stream (NOT multipart)
+  - Params: passed as query parameters
+  - language=multi → auto-detects English, Spanish, and 30+ other languages
+  - Response field: "transcription" (not "text")
 """
 
 import requests
 
-from config import ELEVENLABS_API_KEY, ELEVENLABS_STT_MODEL, SMALLEST_API_KEY
+from config import SMALLEST_API_KEY
 
-_ELEVENLABS_STT_URL = "https://api.elevenlabs.io/v1/speech-to-text"
-_SMALLEST_STT_URL   = "https://waves-api.smallest.ai/api/v1/pulse/get_text"
+_SMALLEST_STT_URL = "https://waves-api.smallest.ai/api/v1/pulse/get_text"
 
 
-def transcribe(audio_bytes: bytes, language: str = "es") -> str:
+def transcribe(audio_bytes: bytes, language: str = "multi") -> str:
     """
-    Transcribes audio using ElevenLabs Scribe.
+    Transcribes audio using smallest.ai Pulse STT.
 
     Args:
         audio_bytes: Raw WAV bytes.
-        language:    Expected ISO 639-1 language code (e.g. "es", "en").
-                     Passed as a hint; Scribe auto-detects regardless.
+        language:    ISO 639-1 code (e.g. "es", "en") or "multi" for
+                     automatic language detection across 30+ languages.
+                     Defaults to "multi" so it handles both Spanish and English.
 
     Returns:
         Transcribed text string, or empty string on failure.
     """
     try:
         response = requests.post(
-            _ELEVENLABS_STT_URL,
-            headers={"xi-api-key": ELEVENLABS_API_KEY},
-            files={"file": ("audio.wav", audio_bytes, "audio/wav")},
-            data={
-                "model_id":      ELEVENLABS_STT_MODEL,
-                "language_code": language,
-            },
-            timeout=20,
-        )
-        response.raise_for_status()
-        data            = response.json()
-        text            = data.get("text", "").strip()
-        detected_lang   = data.get("language_code", "?")
-        print(f"[STT] ElevenLabs ({detected_lang}): {text}")
-        return text
-
-    except requests.RequestException as e:
-        print(f"[STT] ElevenLabs error: {e}. Trying smallest.ai fallback...")
-        return _transcribe_smallest(audio_bytes, language)
-
-
-def _transcribe_smallest(audio_bytes: bytes, language: str) -> str:
-    """smallest.ai Pulse fallback."""
-    try:
-        response = requests.post(
             _SMALLEST_STT_URL,
-            headers={"Authorization": f"Bearer {SMALLEST_API_KEY}"},
-            files={"file": ("audio.wav", audio_bytes, "audio/wav")},
-            data={"language": language},
+            headers={
+                "Authorization": f"Bearer {SMALLEST_API_KEY}",
+                "Content-Type":  "application/octet-stream",
+            },
+            params={
+                "model":    "pulse",
+                "language": language,
+            },
+            data=audio_bytes,
             timeout=20,
         )
         response.raise_for_status()
-        text = response.json().get("text", "").strip()
-        print(f"[STT/smallest] ({language}): {text}")
+        data = response.json()
+        text = data.get("transcription", "").strip()
+        print(f"[STT] smallest.ai ({language}): {text}")
         return text
 
     except requests.RequestException as e:
-        print(f"[STT] smallest.ai error: {e}. Trying Whisper fallback...")
+        print(f"[STT] smallest.ai error: {e}. Falling back to Whisper...")
         return _transcribe_whisper(audio_bytes)
 
 

@@ -1,85 +1,64 @@
 """
 ai/tts.py
 
-Text-to-speech via ElevenLabs (primary).
-Fallback: gTTS if ElevenLabs is unavailable.
-
-ElevenLabs returns raw PCM (24 kHz, 16-bit mono) which we wrap into a WAV
-so the rest of the codebase gets consistent bytes from speak().
+Text-to-speech via smallest.ai Lightning V2 (primary).
+Fallback: gTTS.
 """
 
 import io
-import struct
 import wave
 
 import requests
 
-from config import ELEVENLABS_API_KEY, ELEVENLABS_VOICE_ID
+from config import SMALLEST_API_KEY
 
-_TTS_URL  = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
-_MODEL    = "eleven_multilingual_v2"   # supports ES, EN, FR, HI, AR, DE, PT, etc.
-_PCM_RATE = 24000
+_TTS_URL  = "https://waves-api.smallest.ai/api/v1/lightning-v2/get_speech"
+
+# Voice IDs from smallest.ai lightning-v2
+VOICE_MAP = {
+    "en": "emily",
+    "es": "isabel",
+    "hi": "arjun",
+    "fr": "claire",
+    "ar": "omar",
+    "de": "hans",
+    "pt": "lucia",
+}
 
 
 def speak(text: str, language: str = "en") -> bytes:
     """
-    Converts text to speech using ElevenLabs multilingual v2.
-
-    Args:
-        text:     Text to synthesise.
-        language: ISO 639-1 code, e.g. "en", "es".
-
-    Returns:
-        WAV audio bytes, or empty bytes on failure.
+    Converts text to speech using smallest.ai Lightning V2.
+    Returns WAV audio bytes, or empty bytes on failure.
     """
     if not text.strip():
         return b""
 
-    url = _TTS_URL.format(voice_id=ELEVENLABS_VOICE_ID)
+    voice_id = VOICE_MAP.get(language, "emily")
 
     try:
         response = requests.post(
-            url,
+            _TTS_URL,
             headers={
-                "xi-api-key":   ELEVENLABS_API_KEY,
-                "Content-Type": "application/json",
+                "Authorization": f"Bearer {SMALLEST_API_KEY}",
+                "Content-Type":  "application/json",
             },
             json={
                 "text":          text,
-                "model_id":      _MODEL,
-                "output_format": "pcm_24000",   # raw 16-bit PCM, 24 kHz, mono
-                "voice_settings": {
-                    "stability":        0.5,
-                    "similarity_boost": 0.75,
-                },
+                "voice_id":      voice_id,
+                "language":      language,
+                "sample_rate":   24000,
+                "output_format": "wav",
             },
             timeout=20,
         )
         response.raise_for_status()
-        pcm_bytes = response.content
-        wav_bytes = _pcm_to_wav(pcm_bytes, sample_rate=_PCM_RATE)
-        print(f"[TTS] ElevenLabs ({language}): {text[:60]}...")
-        return wav_bytes
+        print(f"[TTS] smallest.ai ({language}, voice={voice_id}): {text[:60]}...")
+        return response.content
 
     except requests.RequestException as e:
-        print(f"[TTS] ElevenLabs error: {e}. Falling back to gTTS...")
+        print(f"[TTS] smallest.ai error: {e}. Falling back to gTTS...")
         return _speak_gtts(text, language)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int = 24000,
-                channels: int = 1, sample_width: int = 2) -> bytes:
-    """Wraps raw 16-bit PCM bytes in a WAV container."""
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(channels)
-        wf.setsampwidth(sample_width)
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm_bytes)
-    return buf.getvalue()
 
 
 def _speak_gtts(text: str, language: str) -> bytes:

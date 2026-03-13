@@ -8,10 +8,11 @@ Interactive docs: http://localhost:8000/docs
 """
 
 import base64
+import json
 import uuid
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -95,14 +96,11 @@ class StartSessionResponse(BaseModel):
     first_question_audio_b64: str
 
 class AnswerResponse(BaseModel):
-    patient_transcript_native: str       # what the patient said (their language)
-    patient_text_en: str                 # translated to English
+    session_id: str                      # always returned — pass this in future turns
+    patient_text_en: str                 # patient's answer in English
     nurse_reply_text_en: str             # nurse reply in English
-    nurse_reply_text_native: str         # nurse reply in patient's language
-    nurse_reply_audio_b64: str
     done: bool
     # Populated only when done=True
-    session_id: Optional[str] = None
     clinical_summary: Optional[str] = None
     severity_score: Optional[int] = None
     risk_level: Optional[str] = None
@@ -188,71 +186,81 @@ def start_session(
     )
 
 
-@app.post("/session/{session_id}/answer", response_model=AnswerResponse,
+@app.post("/answer", response_model=AnswerResponse,
           summary="Submit a patient answer and get the next nurse response")
 async def submit_answer(
-    session_id: str,
-    audio: Optional[UploadFile] = File(default=None, description="WAV audio of patient's answer"),
-    text:  Optional[str]        = Form(default=None, description="Patient answer as text (alternative to audio)"),
+    session_id: Optional[str]  = Form(default=None, description="Session ID from a previous turn. Omit to start a new session."),
+    text:       Optional[str]  = Form(default=None, description="Patient answer in English"),
+    audio:      Optional[UploadFile] = File(default=None, description="WAV audio of patient's answer"),
 ):
     """
-    Accepts the patient's answer as either a WAV audio upload or raw text.
+    Single endpoint for the full nurse intake conversation.
 
-    - Transcribes audio (if provided) in the patient's language
-    - Translates to English and logs both versions
-    - Passes the English answer to GPT-4o nurse
-    - Returns the nurse's next reply as text + audio in the patient's language
-    - When done=True, also returns the clinical summary and saves the session to MongoDB
+    - Omit session_id to auto-start a new session. The returned session_id must
+      be passed in every subsequent turn.
+    - Pass text (English) or audio on each turn.
+    - Repeat until done=True, which also saves the session to MongoDB.
     """
-    session = _require_session(session_id)
+    # --- Resolve or create session ---
+    if not session_id or session_id not in _active:
+        session_id = str(uuid.uuid4())[:8]   # short readable ID
+        gpt_history, _, first_q_en = start_nurse_conversation()
+        _active[session_id] = {
+            "name":          "Patient",
+            "language_code": PATIENT_LANG_CODE,
+            "language_name": PATIENT_LANG_NAME,
+            "gpt_history":   gpt_history,
+            "english_log":   [
+                {"role": "nurse", "text": NURSE_INTRO_EN},
+                {"role": "nurse", "text": first_q_en},
+            ],
+            "native_log":    [
+                {"role": "nurse", "text": NURSE_INTRO_EN},
+                {"role": "nurse", "text": first_q_en},
+            ],
+        }
+
+    session   = _active[session_id]
     lang_code = session["language_code"]
     lang_name = session["language_name"]
 
     # --- Get patient answer text ---
     if audio:
         audio_bytes = await audio.read()
-        patient_native = transcribe(audio_bytes, language=lang_code)
+        patient_text = transcribe(audio_bytes, language="multi")
     elif text:
-        patient_native = text
+        patient_text = text
     else:
-        raise HTTPException(status_code=422, detail="Provide either 'audio' or 'text'.")
+        raise HTTPException(status_code=422, detail="Provide either 'text' or 'audio'.")
 
-    if not patient_native.strip():
-        raise HTTPException(status_code=400, detail="No speech detected. Please try again.")
+    if not patient_text.strip():
+        raise HTTPException(status_code=400, detail="Empty input.")
 
-    # --- Translate patient answer to English ---
-    patient_en = translate(patient_native, lang_name, "English")
+    # --- Log patient answer (English) ---
+    session["english_log"].append({"role": "patient", "text": patient_text})
+    session["native_log"].append( {"role": "patient", "text": patient_text})
 
-    # --- Log both versions ---
-    session["english_log"].append({"role": "patient", "text": patient_en})
-    session["native_log"].append( {"role": "patient", "text": patient_native})
-
-    # --- GPT-4o next nurse turn (English) ---
+    # --- GPT-4o next nurse turn ---
     session["gpt_history"], nurse_reply_en, done = next_nurse_turn(
-        session["gpt_history"], patient_en
+        session["gpt_history"], patient_text
     )
     session["english_log"].append({"role": "nurse", "text": nurse_reply_en})
-
-    # --- Translate nurse reply and synthesise audio ---
-    nurse_reply_native, nurse_audio_b64 = _tts_b64(nurse_reply_en, lang_code, lang_name)
-    session["native_log"].append({"role": "nurse", "text": nurse_reply_native})
+    session["native_log"].append( {"role": "nurse", "text": nurse_reply_en})
 
     response = AnswerResponse(
-        patient_transcript_native=patient_native,
-        patient_text_en=patient_en,
+        session_id=session_id,
+        patient_text_en=patient_text,
         nurse_reply_text_en=nurse_reply_en,
-        nurse_reply_text_native=nurse_reply_native,
-        nurse_reply_audio_b64=nurse_audio_b64,
         done=done,
     )
 
-    # --- If intake complete: extract structured data, save to DB ---
+    # --- If intake complete: save to DB ---
     if done:
         english_log = session["english_log"]
         structured  = extract_structured_data(english_log)
         summary     = generate_clinical_summary(english_log)
 
-        saved_id = save_patient_session(
+        save_patient_session(
             name=session["name"],
             language_code=lang_code,
             language_name=lang_name,
@@ -261,12 +269,11 @@ async def submit_answer(
             structured=structured,
             clinical_summary=summary,
         )
-        del _active[session_id]   # free memory
+        del _active[session_id]
 
-        response.session_id      = saved_id
         response.clinical_summary = summary
-        response.severity_score  = structured.get("severity_score")
-        response.risk_level      = structured.get("risk_level")
+        response.severity_score   = structured.get("severity_score")
+        response.risk_level       = structured.get("risk_level")
 
     return response
 
@@ -445,6 +452,96 @@ def set_status(session_id: str, body: StatusUpdate):
 
     update_status(session_id, body.status)
     return {"session_id": session_id, "status": body.status}
+
+
+@app.websocket("/ws/relay/{session_id}")
+async def relay_websocket(websocket: WebSocket, session_id: str):
+    """
+    WebSocket relay for real-time doctor ↔ patient voice translation.
+
+    Frontend connects once per consultation session and sends audio turns
+    as they happen. Each message is JSON:
+
+        Incoming (frontend → backend):
+        {
+            "direction": "doctor" | "patient",
+            "audio_b64": "<base64-encoded WAV>"   // mic recording
+        }
+
+        Outgoing (backend → frontend):
+        {
+            "direction": "doctor" | "patient",
+            "original_text":    "...",   // what was said
+            "translated_text":  "...",   // translation
+            "audio_b64":        "..."    // translated speech as base64 WAV
+        }
+
+    Pipeline:
+        doctor  → smallest.ai STT (EN) → GPT-4o translate EN→ES → smallest.ai TTS (ES)
+        patient → smallest.ai STT (multi) → GPT-4o translate ES→EN → smallest.ai TTS (EN)
+    """
+    await websocket.accept()
+
+    doc = get_session(session_id)
+    if not doc:
+        await websocket.send_text(json.dumps({"error": f"Session '{session_id}' not found."}))
+        await websocket.close()
+        return
+
+    lang_code = doc.get("language_code", "es")
+    lang_name = doc.get("language_name", "Spanish")
+
+    print(f"[WS Relay] Connected — session={session_id} lang={lang_name}")
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            payload = json.loads(raw)
+
+            direction = payload.get("direction")
+            audio_b64 = payload.get("audio_b64", "")
+
+            if not direction or not audio_b64:
+                await websocket.send_text(json.dumps(
+                    {"error": "Payload must include 'direction' and 'audio_b64'."}
+                ))
+                continue
+
+            audio_bytes = base64.b64decode(audio_b64)
+
+            if direction == "doctor":
+                # Doctor speaks English → transcribe → translate → speak Spanish to patient
+                original = transcribe(audio_bytes, language="en")
+                if not original:
+                    await websocket.send_text(json.dumps({"error": "Could not transcribe doctor audio."}))
+                    continue
+                translated = translate(original, "English", lang_name)
+                audio_out  = speak(translated, lang_code)
+
+            elif direction == "patient":
+                # Patient speaks (auto-detect) → transcribe → translate → speak English to doctor
+                original   = transcribe(audio_bytes, language="multi")
+                if not original:
+                    await websocket.send_text(json.dumps({"error": "Could not transcribe patient audio."}))
+                    continue
+                translated = translate(original, lang_name, "English")
+                audio_out  = speak(translated, "en")
+
+            else:
+                await websocket.send_text(json.dumps(
+                    {"error": "direction must be 'doctor' or 'patient'."}
+                ))
+                continue
+
+            await websocket.send_text(json.dumps({
+                "direction":       direction,
+                "original_text":   original,
+                "translated_text": translated,
+                "audio_b64":       base64.b64encode(audio_out).decode() if audio_out else "",
+            }))
+
+    except WebSocketDisconnect:
+        print(f"[WS Relay] Disconnected — session={session_id}")
 
 
 @app.get("/health", include_in_schema=False)

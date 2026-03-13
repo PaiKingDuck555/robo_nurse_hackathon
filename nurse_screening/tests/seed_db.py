@@ -298,6 +298,238 @@ PATIENTS = [
         "status": "waiting",
         "checked_in_at": datetime.now(timezone.utc) - timedelta(minutes=50),
     },
+
+    # ── 7. CRITICAL ────────────────────────────────────────────────────────
+    {
+        "name": "Elena Castillo",
+        "language_code": "es", "language_name": "Spanish",
+        "chief_complaint": "Difficulty breathing and swollen throat after eating",
+        "symptoms": ["throat swelling", "difficulty breathing", "hives", "dizziness"],
+        "pain_level": 8,
+        "allergies": ["shellfish"],
+        "current_medications": [],
+        "severity_score": 10,
+        "risk_level": "critical",
+        "clinical_summary": (
+            "CHIEF COMPLAINT: Acute throat swelling and difficulty breathing after eating shrimp\n"
+            "HISTORY: Symptoms onset 15 minutes ago after accidental shellfish ingestion. "
+            "Progressive throat tightening, hives on arms and neck, dizziness.\n"
+            "PAIN LEVEL: 8/10\n"
+            "ALLERGIES: Shellfish (severe)\n"
+            "CURRENT MEDICATIONS: None\n"
+            "CLINICAL NOTES: Presentation consistent with anaphylaxis. "
+            "Epinephrine required immediately. Do not delay."
+        ),
+        "conversation_english": [
+            {"role": "nurse",   "text": "Hello, I am MedRover. What brings you in today?"},
+            {"role": "patient", "text": "I can't breathe properly. My throat is swelling up after I ate shrimp."},
+            {"role": "nurse",   "text": "Are you allergic to shellfish? When did this start?"},
+            {"role": "patient", "text": "Yes I am allergic. It started about 15 minutes ago. I also have hives on my arms."},
+            {"role": "nurse",   "text": "Are you feeling dizzy or lightheaded?"},
+            {"role": "patient", "text": "Yes very dizzy. Please hurry."},
+            {"role": "nurse",   "text": "The doctor is coming right now. Stay calm. [INTAKE_COMPLETE]"},
+        ],
+        "conversation_native": [
+            {"role": "nurse",   "text": "Hola, soy MedRover. ¿Qué le trae por aquí hoy?"},
+            {"role": "patient", "text": "No puedo respirar bien. Se me está hinchando la garganta después de comer camarones."},
+            {"role": "nurse",   "text": "¿Es alérgica a los mariscos? ¿Cuándo empezó esto?"},
+            {"role": "patient", "text": "Sí soy alérgica. Empezó hace unos 15 minutos. También tengo ronchas en los brazos."},
+            {"role": "nurse",   "text": "¿Siente mareos o sensación de desmayo?"},
+            {"role": "patient", "text": "Sí, mucho mareo. Por favor dense prisa."},
+            {"role": "nurse",   "text": "El médico viene ahora mismo. Mantenga la calma."},
+        ],
+        "status": "waiting",
+        "checked_in_at": datetime.now(timezone.utc) - timedelta(minutes=3),
+    },
+
+    # ── 8. HIGH ────────────────────────────────────────────────────────────
+    {
+        "name": "Miguel Torres",
+        "language_code": "es", "language_name": "Spanish",
+        "chief_complaint": "Severe eye pain and blurred vision",
+        "symptoms": ["eye pain", "blurred vision", "headache", "nausea", "red eye"],
+        "pain_level": 8,
+        "allergies": [],
+        "current_medications": ["eye drops for glaucoma"],
+        "severity_score": 8,
+        "risk_level": "high",
+        "clinical_summary": (
+            "CHIEF COMPLAINT: Sudden severe right eye pain with blurred vision and halos\n"
+            "HISTORY: Sudden onset right eye pain 1 hour ago. Reports seeing halos around lights, "
+            "blurred vision, associated nausea and frontal headache. Known glaucoma patient.\n"
+            "PAIN LEVEL: 8/10\n"
+            "ALLERGIES: None known\n"
+            "CURRENT MEDICATIONS: Glaucoma eye drops (name unknown)\n"
+            "CLINICAL NOTES: Presentation consistent with acute angle-closure glaucoma. "
+            "Urgent IOP measurement and ophthalmology consult required."
+        ),
+        "conversation_english": [
+            {"role": "nurse",   "text": "Hello, I am MedRover. What brings you in today?"},
+            {"role": "patient", "text": "I have terrible pain in my right eye and I can barely see. Everything is blurry."},
+            {"role": "nurse",   "text": "Did this come on suddenly? Are you seeing halos around lights?"},
+            {"role": "patient", "text": "Yes very suddenly, about an hour ago. Yes I see halos and I feel nauseous."},
+            {"role": "nurse",   "text": "Do you have any eye conditions or take any eye medications?"},
+            {"role": "patient", "text": "I have glaucoma. I use eye drops for it every day."},
+            {"role": "nurse",   "text": "How severe is the pain from 1 to 10?"},
+            {"role": "patient", "text": "An 8. It is the worst eye pain I have ever had."},
+            {"role": "nurse",   "text": "The doctor will see you immediately. [INTAKE_COMPLETE]"},
+        ],
+        "conversation_native": [
+            {"role": "nurse",   "text": "Hola, soy MedRover. ¿Qué le trae por aquí hoy?"},
+            {"role": "patient", "text": "Tengo un dolor terrible en el ojo derecho y casi no puedo ver. Todo está borroso."},
+            {"role": "nurse",   "text": "¿Apareció de repente? ¿Ve halos alrededor de las luces?"},
+            {"role": "patient", "text": "Sí, muy de repente, hace como una hora. Sí veo halos y tengo náuseas."},
+            {"role": "nurse",   "text": "¿Tiene alguna condición ocular o toma medicamentos para los ojos?"},
+            {"role": "patient", "text": "Tengo glaucoma. Uso gotas para los ojos todos los días."},
+            {"role": "nurse",   "text": "¿Qué tan fuerte es el dolor del 1 al 10?"},
+            {"role": "patient", "text": "Un 8. Es el peor dolor de ojos que he tenido."},
+            {"role": "nurse",   "text": "El médico le atenderá de inmediato."},
+        ],
+        "status": "waiting",
+        "checked_in_at": datetime.now(timezone.utc) - timedelta(minutes=8),
+    },
+
+    # ── 9. MEDIUM ──────────────────────────────────────────────────────────
+    {
+        "name": "Lucia Ramirez",
+        "language_code": "es", "language_name": "Spanish",
+        "chief_complaint": "Urinary burning and frequent urination for 3 days",
+        "symptoms": ["burning urination", "frequent urination", "lower abdominal discomfort", "cloudy urine"],
+        "pain_level": 4,
+        "allergies": ["sulfa drugs"],
+        "current_medications": [],
+        "severity_score": 5,
+        "risk_level": "medium",
+        "clinical_summary": (
+            "CHIEF COMPLAINT: Dysuria and urinary frequency for 3 days\n"
+            "HISTORY: Gradual onset burning sensation on urination and increased frequency "
+            "over 3 days. Reports cloudy urine. No fever. No flank pain.\n"
+            "PAIN LEVEL: 4/10\n"
+            "ALLERGIES: Sulfa drugs\n"
+            "CURRENT MEDICATIONS: None\n"
+            "CLINICAL NOTES: Presentation consistent with uncomplicated UTI. "
+            "Sulfa allergy noted — avoid trimethoprim-sulfamethoxazole. Consider nitrofurantoin."
+        ),
+        "conversation_english": [
+            {"role": "nurse",   "text": "Hello, I am MedRover. What brings you in today?"},
+            {"role": "patient", "text": "It burns when I urinate and I have to go very frequently. It has been 3 days."},
+            {"role": "nurse",   "text": "Do you have any fever or pain in your back or sides?"},
+            {"role": "patient", "text": "No fever. No back pain. Just burning and my urine looks cloudy."},
+            {"role": "nurse",   "text": "How would you rate the discomfort from 1 to 10?"},
+            {"role": "patient", "text": "About a 4."},
+            {"role": "nurse",   "text": "Any medication allergies?"},
+            {"role": "patient", "text": "Yes I am allergic to sulfa drugs."},
+            {"role": "nurse",   "text": "Thank you. The doctor will be with you shortly. [INTAKE_COMPLETE]"},
+        ],
+        "conversation_native": [
+            {"role": "nurse",   "text": "Hola, soy MedRover. ¿Qué le trae por aquí hoy?"},
+            {"role": "patient", "text": "Me arde cuando orino y tengo que ir muy seguido. Lleva 3 días así."},
+            {"role": "nurse",   "text": "¿Tiene fiebre o dolor en la espalda o los costados?"},
+            {"role": "patient", "text": "Sin fiebre. Sin dolor de espalda. Solo ardor y la orina se ve turbia."},
+            {"role": "nurse",   "text": "¿Cómo calificaría el malestar del 1 al 10?"},
+            {"role": "patient", "text": "Como un 4."},
+            {"role": "nurse",   "text": "¿Tiene alergias a medicamentos?"},
+            {"role": "patient", "text": "Sí, soy alérgica a las sulfas."},
+            {"role": "nurse",   "text": "Gracias. El médico estará con usted pronto."},
+        ],
+        "status": "waiting",
+        "checked_in_at": datetime.now(timezone.utc) - timedelta(minutes=25),
+    },
+
+    # ── 10. LOW ────────────────────────────────────────────────────────────
+    {
+        "name": "Pedro Guzman",
+        "language_code": "es", "language_name": "Spanish",
+        "chief_complaint": "Minor cut on hand needing wound check",
+        "symptoms": ["laceration on right hand", "minor bleeding"],
+        "pain_level": 2,
+        "allergies": [],
+        "current_medications": [],
+        "severity_score": 2,
+        "risk_level": "low",
+        "clinical_summary": (
+            "CHIEF COMPLAINT: Small laceration on right palm from kitchen knife\n"
+            "HISTORY: Accidental knife cut while cooking approximately 30 minutes ago. "
+            "Bleeding controlled with pressure. No tendon or nerve involvement reported. "
+            "Tetanus status unknown.\n"
+            "PAIN LEVEL: 2/10\n"
+            "ALLERGIES: None known\n"
+            "CURRENT MEDICATIONS: None\n"
+            "CLINICAL NOTES: Low acuity wound. Assess for closure needs and tetanus status."
+        ),
+        "conversation_english": [
+            {"role": "nurse",   "text": "Hello, I am MedRover. What brings you in today?"},
+            {"role": "patient", "text": "I cut my hand on a knife while cooking. It stopped bleeding but I want it checked."},
+            {"role": "nurse",   "text": "Can you move your fingers normally? Any numbness?"},
+            {"role": "patient", "text": "Yes I can move them fine. No numbness."},
+            {"role": "nurse",   "text": "How severe is the pain from 1 to 10?"},
+            {"role": "patient", "text": "Just a 2. It is not too bad."},
+            {"role": "nurse",   "text": "Any allergies or medications?"},
+            {"role": "patient", "text": "No allergies. No medications."},
+            {"role": "nurse",   "text": "Thank you. The doctor will clean and assess the wound shortly. [INTAKE_COMPLETE]"},
+        ],
+        "conversation_native": [
+            {"role": "nurse",   "text": "Hola, soy MedRover. ¿Qué le trae por aquí hoy?"},
+            {"role": "patient", "text": "Me corté la mano con un cuchillo mientras cocinaba. Ya dejó de sangrar pero quiero que lo revisen."},
+            {"role": "nurse",   "text": "¿Puede mover los dedos normalmente? ¿Tiene entumecimiento?"},
+            {"role": "patient", "text": "Sí los muevo bien. Sin entumecimiento."},
+            {"role": "nurse",   "text": "¿Qué tan fuerte es el dolor del 1 al 10?"},
+            {"role": "patient", "text": "Solo un 2. No está tan mal."},
+            {"role": "nurse",   "text": "¿Tiene alergias o medicamentos?"},
+            {"role": "patient", "text": "Sin alergias. Sin medicamentos."},
+            {"role": "nurse",   "text": "Gracias. El médico limpiará y evaluará la herida pronto."},
+        ],
+        "status": "done",
+        "checked_in_at": datetime.now(timezone.utc) - timedelta(hours=1),
+    },
+
+    # ── 11. HIGH ───────────────────────────────────────────────────────────
+    {
+        "name": "Carmen Flores",
+        "language_code": "es", "language_name": "Spanish",
+        "chief_complaint": "Severe migraine with vomiting unresponsive to medication",
+        "symptoms": ["severe headache", "vomiting", "light sensitivity", "visual aura"],
+        "pain_level": 9,
+        "allergies": ["codeine"],
+        "current_medications": ["sumatriptan", "metoclopramide"],
+        "severity_score": 7,
+        "risk_level": "high",
+        "clinical_summary": (
+            "CHIEF COMPLAINT: Severe migraine with vomiting, not responding to home medications\n"
+            "HISTORY: Known migraineur. Current attack started 6 hours ago with visual aura. "
+            "Took sumatriptan and metoclopramide with no relief. Multiple vomiting episodes. "
+            "Photophobia present.\n"
+            "PAIN LEVEL: 9/10\n"
+            "ALLERGIES: Codeine\n"
+            "CURRENT MEDICATIONS: Sumatriptan, Metoclopramide\n"
+            "CLINICAL NOTES: Refractory migraine requiring IV treatment. "
+            "Codeine allergy noted. Consider IV ketorolac and prochlorperazine."
+        ),
+        "conversation_english": [
+            {"role": "nurse",   "text": "Hello, I am MedRover. What brings you in today?"},
+            {"role": "patient", "text": "I have a terrible migraine. I have been vomiting for hours and my medication is not working."},
+            {"role": "nurse",   "text": "How long has this migraine been going on and did you have any warning signs?"},
+            {"role": "patient", "text": "About 6 hours. I had flashing lights in my vision before it started."},
+            {"role": "nurse",   "text": "What medications did you take and how severe is the pain?"},
+            {"role": "patient", "text": "Sumatriptan and metoclopramide. Nothing helped. Pain is a 9 out of 10."},
+            {"role": "nurse",   "text": "Any medication allergies?"},
+            {"role": "patient", "text": "Yes I am allergic to codeine."},
+            {"role": "nurse",   "text": "Thank you. The doctor will see you soon. [INTAKE_COMPLETE]"},
+        ],
+        "conversation_native": [
+            {"role": "nurse",   "text": "Hola, soy MedRover. ¿Qué le trae por aquí hoy?"},
+            {"role": "patient", "text": "Tengo una migraña terrible. Llevo horas vomitando y mi medicamento no funciona."},
+            {"role": "nurse",   "text": "¿Hace cuánto tiene esta migraña y tuvo alguna señal de advertencia?"},
+            {"role": "patient", "text": "Unas 6 horas. Tuve luces parpadeantes en mi visión antes de que empezara."},
+            {"role": "nurse",   "text": "¿Qué medicamentos tomó y qué tan fuerte es el dolor?"},
+            {"role": "patient", "text": "Sumatriptán y metoclopramida. Nada ayudó. El dolor es un 9 de 10."},
+            {"role": "nurse",   "text": "¿Tiene alergias a medicamentos?"},
+            {"role": "patient", "text": "Sí soy alérgica a la codeína."},
+            {"role": "nurse",   "text": "Gracias. El médico le atenderá pronto."},
+        ],
+        "status": "waiting",
+        "checked_in_at": datetime.now(timezone.utc) - timedelta(minutes=15),
+    },
 ]
 
 
