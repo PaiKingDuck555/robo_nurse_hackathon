@@ -1,5 +1,8 @@
 import os
+import sys
 import json
+import tty
+import termios
 import asyncio
 import threading
 from datetime import datetime
@@ -33,6 +36,25 @@ WS_PARAMS = {
 WS_URL = f"wss://api.smallest.ai/waves/v1/lightning/get_text?{urlencode(WS_PARAMS)}"
 
 transcript_entries = []
+
+
+def get_key():
+    """Read a single keypress (Linux/Pi)."""
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        return sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def wait_for_r():
+    """Block until user presses 'r' or 'R'."""
+    while True:
+        key = get_key()
+        if key.lower() == "r":
+            return
 
 
 def get_output_path():
@@ -103,8 +125,9 @@ async def run():
 
     print(f"Connecting to smallest.ai ({WS_PARAMS['language']} mode)...")
     print(f"Sample rate: {SAMPLE_RATE} Hz")
-    input("Press Enter to start recording... ")
-    print("\nRecording. Speak now. Press Enter when done.\n")
+    print("Press 'r' to start recording...")
+    wait_for_r()
+    print("\nRecording. Speak now. Press 'r' to stop.\n")
 
     try:
         async with websockets.connect(WS_URL, additional_headers=headers) as ws:
@@ -112,9 +135,9 @@ async def run():
 
             stop = asyncio.Event()
 
-            async def wait_for_enter():
+            async def wait_for_r_stop():
                 loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, lambda: input())
+                await loop.run_in_executor(None, wait_for_r)
                 stop.set()
 
             async def send_audio():
@@ -181,9 +204,9 @@ async def run():
 
             sender = asyncio.create_task(send_audio())
             receiver = asyncio.create_task(receive_transcripts())
-            enter_waiter = asyncio.create_task(wait_for_enter())
+            r_waiter = asyncio.create_task(wait_for_r_stop())
 
-            await asyncio.gather(sender, receiver, enter_waiter)
+            await asyncio.gather(sender, receiver, r_waiter)
 
     except websockets.ConnectionClosed as e:
         print(f"\nConnection closed: {e.code} - {e.reason}")
