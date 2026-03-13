@@ -4,6 +4,7 @@ import json
 import tty
 import termios
 import threading
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 import sounddevice as sd
@@ -16,6 +17,7 @@ load_dotenv()
 
 API_KEY = os.getenv("SMALLEST_API_KEY")
 SAMPLE_RATE = 44100
+TRANSCRIPT_FILE = os.path.join(os.path.dirname(__file__), "transcripts.json")
 
 LANGUAGES = {"e": "en", "s": "es"}
 
@@ -97,29 +99,30 @@ async def transcribe(pcm_data, language):
     return transcript
 
 
-async def main():
-    mic_idx, mic_rate = find_input_device()
-    if mic_idx is None:
-        print("No microphone found. Plug in a USB mic and try again.")
-        return
+def save_transcript(text, language, duration):
+    entries = []
+    if os.path.exists(TRANSCRIPT_FILE):
+        with open(TRANSCRIPT_FILE, "r") as f:
+            try:
+                entries = json.load(f)
+            except json.JSONDecodeError:
+                entries = []
 
-    global SAMPLE_RATE
-    SAMPLE_RATE = mic_rate
+    entries.append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "language": language,
+        "duration_s": round(duration, 2),
+        "text": text,
+    })
 
-    mic_name = sd.query_devices(mic_idx)['name']
-    print(f"Mic: {mic_name} @ {SAMPLE_RATE}Hz")
+    with open(TRANSCRIPT_FILE, "w") as f:
+        json.dump(entries, f, indent=2, ensure_ascii=False)
 
-    print("\nSelect language:  [e] English  [s] Spanish")
-    while True:
-        ch = get_key()
-        if ch in LANGUAGES:
-            language = LANGUAGES[ch]
-            break
-        if ch in ("\x03", "q"):
-            sys.exit(0)
-    print(f"\nLanguage: {language}")
+    return len(entries)
 
-    print("Press [r] to start recording...")
+
+async def record_once(mic_idx, language):
+    print("\nPress [r] to start recording...")
     wait_for_r()
 
     print("\nRecording... speak now. Press [r] to stop.\n")
@@ -162,9 +165,45 @@ async def main():
     transcript = await transcribe(pcm_data, language)
 
     if transcript:
-        print(f"\n>>> {transcript}\n")
+        count = save_transcript(transcript, language, duration)
+        print(f"\n>>> {transcript}")
+        print(f"    (saved to {TRANSCRIPT_FILE} — {count} entries total)\n")
     else:
         print("\nNo speech detected.\n")
+
+
+async def main():
+    mic_idx, mic_rate = find_input_device()
+    if mic_idx is None:
+        print("No microphone found. Plug in a USB mic and try again.")
+        return
+
+    global SAMPLE_RATE
+    SAMPLE_RATE = mic_rate
+
+    mic_name = sd.query_devices(mic_idx)['name']
+    print(f"Mic: {mic_name} @ {SAMPLE_RATE}Hz")
+
+    print("\nSelect language:  [e] English  [s] Spanish")
+    while True:
+        ch = get_key()
+        if ch in LANGUAGES:
+            language = LANGUAGES[ch]
+            break
+        if ch in ("\x03", "q"):
+            sys.exit(0)
+    print(f"Language: {language}")
+
+    while True:
+        await record_once(mic_idx, language)
+        print("--- Press [r] to record again, [q] to quit ---")
+        while True:
+            ch = get_key()
+            if ch == "r":
+                break
+            if ch in ("\x03", "q"):
+                print("\nDone.")
+                return
 
 
 if __name__ == "__main__":
