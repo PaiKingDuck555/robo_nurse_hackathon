@@ -4,6 +4,7 @@ import json
 import tty
 import termios
 import asyncio
+import queue
 import threading
 from datetime import datetime
 from urllib.parse import urlencode
@@ -109,7 +110,7 @@ async def run():
         return
 
     mic_rate = get_mic_native_rate(mic_index)
-    block_size = int(mic_rate * 0.05)  # 50ms chunks for low latency
+    block_size = int(mic_rate * 0.05)  # 50ms chunks
 
     print(f"Mic: [{mic_index}] {mic_name}")
     print(f"Sample rate: {mic_rate} Hz")
@@ -136,11 +137,12 @@ async def run():
             print("Connected. Speak now! Press [r] to stop.\n")
 
             stop_event = threading.Event()
-            audio_queue = asyncio.Queue()
+            audio_q = queue.Queue()  # thread-safe queue
+            chunks_sent = 0
 
             def audio_callback(indata, frames, time_info, status):
                 if not stop_event.is_set():
-                    audio_queue.put_nowait(indata.tobytes())
+                    audio_q.put(indata.tobytes())
 
             stream = sd.InputStream(
                 samplerate=mic_rate,
@@ -160,33 +162,40 @@ async def run():
             key_thread.start()
 
             async def send_audio():
-                """Stream audio to WebSocket in real-time."""
+                nonlocal chunks_sent
+                loop = asyncio.get_event_loop()
                 while not stop_event.is_set():
                     try:
-                        data = await asyncio.wait_for(audio_queue.get(), timeout=0.1)
+                        data = await loop.run_in_executor(
+                            None, lambda: audio_q.get(timeout=0.1)
+                        )
                         await ws.send(data)
-                    except asyncio.TimeoutError:
+                        chunks_sent += 1
+                    except queue.Empty:
                         continue
                     except Exception as e:
                         print(f"Send error: {e}")
                         break
 
                 # Drain remaining audio
-                while not audio_queue.empty():
+                while not audio_q.empty():
                     try:
-                        data = audio_queue.get_nowait()
+                        data = audio_q.get_nowait()
                         await ws.send(data)
+                        chunks_sent += 1
                     except Exception:
                         break
 
+                print(f"\n--- Recording stopped. Sent {chunks_sent} chunks. Waiting for results... ---")
                 await ws.send(json.dumps({"type": "finalize"}))
-                print("\n--- Recording stopped. Waiting for final results... ---")
 
             async def receive_transcripts():
-                """Receive transcripts in real-time."""
                 async for message in ws:
                     try:
                         data = json.loads(message)
+
+                        # Debug: print raw API response
+                        msg_type = data.get("type", "")
                         transcript = data.get("transcript", "").strip()
                         is_final = data.get("is_final", False)
                         is_last = data.get("is_last", False)
@@ -194,6 +203,7 @@ async def run():
 
                         if not transcript:
                             if is_last:
+                                print("[DEBUG] Got is_last=true, ending.")
                                 break
                             continue
 
