@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getPrescriptionForPatient } from "@/lib/dummy-data";
 import {
-  getPatientById,
-  getSessionsForPatient,
-  getPrescriptionForPatient,
-} from "@/lib/dummy-data";
+  fetchWaitingPatients,
+  transformToPatient,
+  transformToIntakeSession,
+} from "@/lib/railway";
 
 export async function GET(
   request: NextRequest,
@@ -11,18 +12,29 @@ export async function GET(
 ) {
   const { id } = await params;
 
-  const patient = getPatientById(id);
-  if (!patient) {
-    return NextResponse.json({ error: "Patient not found" }, { status: 404 });
+  try {
+    const waiting = await fetchWaitingPatients();
+    const railwaySession = waiting.find((s) => s.session_id === id);
+
+    if (!railwaySession) {
+      return NextResponse.json({ error: "Patient not found" }, { status: 404 });
+    }
+
+    const patient = transformToPatient(railwaySession);
+    const intakeSession = transformToIntakeSession(railwaySession);
+    const prescription = getPrescriptionForPatient(id);
+
+    return NextResponse.json({
+      patient,
+      intakeSession,
+      relaySession: null,
+      prescription,
+    });
+  } catch (err: any) {
+    console.error("Failed to fetch patient from Railway:", err.message);
+    return NextResponse.json(
+      { error: "Failed to fetch patient data" },
+      { status: 502 }
+    );
   }
-
-  const { intake, relay } = getSessionsForPatient(id);
-  const prescription = getPrescriptionForPatient(id);
-
-  return NextResponse.json({
-    patient,
-    intakeSession: intake,
-    relaySession: relay,
-    prescription,
-  });
 }

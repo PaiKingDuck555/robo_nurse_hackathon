@@ -1,37 +1,59 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  patients,
-  getLatestPatient,
-  getSessionsForPatient,
-  getPrescriptionForPatient,
-} from "@/lib/dummy-data";
+  fetchWaitingPatients,
+  transformToPatient,
+  transformToIntakeSession,
+} from "@/lib/railway";
+import { getPrescriptionForPatient } from "@/lib/dummy-data";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const latest = searchParams.get("latest");
 
   if (latest === "true") {
-    const patient = getLatestPatient();
+    try {
+      const waiting = await fetchWaitingPatients();
 
-    if (!patient) {
+      if (!waiting || waiting.length === 0) {
+        return NextResponse.json({
+          patient: null,
+          intakeSession: null,
+          relaySession: null,
+          prescription: null,
+        });
+      }
+
+      // First patient is highest severity (Railway sorts by severity_score desc)
+      const rs = waiting[0];
+      const patient = transformToPatient(rs);
+      const intakeSession = transformToIntakeSession(rs);
+      const prescription = getPrescriptionForPatient(patient._id);
+
       return NextResponse.json({
-        patient: null,
-        intakeSession: null,
+        patient,
+        intakeSession,
         relaySession: null,
-        prescription: null,
+        prescription,
       });
+    } catch (err: any) {
+      console.error("Failed to fetch from Railway:", err.message);
+      return NextResponse.json(
+        { error: "Failed to fetch patient data from Railway" },
+        { status: 502 }
+      );
     }
-
-    const { intake, relay } = getSessionsForPatient(patient._id);
-    const prescription = getPrescriptionForPatient(patient._id);
-
-    return NextResponse.json({
-      patient,
-      intakeSession: intake,
-      relaySession: relay,
-      prescription,
-    });
   }
 
-  return NextResponse.json({ patients });
+  // List all waiting patients
+  try {
+    const waiting = await fetchWaitingPatients();
+    const patients = waiting.map(transformToPatient);
+    return NextResponse.json({ patients });
+  } catch (err: any) {
+    console.error("Failed to fetch from Railway:", err.message);
+    return NextResponse.json(
+      { error: "Failed to fetch patients from Railway" },
+      { status: 502 }
+    );
+  }
 }
