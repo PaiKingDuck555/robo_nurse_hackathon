@@ -1,0 +1,4 @@
+pyaudio
+websockets
+deep-translator
+python-dotenv
