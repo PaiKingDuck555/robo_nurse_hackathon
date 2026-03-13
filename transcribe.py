@@ -91,6 +91,23 @@ def save_transcript(path):
     print(f"\nTranscript saved to {path}")
 
 
+def find_usb_input_device():
+    """Find USB PnP mic index, or first input device if not found."""
+    audio = pyaudio.PyAudio()
+    for i in range(audio.get_device_count()):
+        info = audio.get_device_info_by_index(i)
+        if info["maxInputChannels"] > 0 and "USB" in info["name"]:
+            audio.terminate()
+            return i
+    for i in range(audio.get_device_count()):
+        info = audio.get_device_info_by_index(i)
+        if info["maxInputChannels"] > 0:
+            audio.terminate()
+            return i
+    audio.terminate()
+    return None
+
+
 def list_audio_devices():
     audio = pyaudio.PyAudio()
     print("Available audio input devices:")
@@ -105,15 +122,22 @@ def list_audio_devices():
 async def run():
     list_audio_devices()
 
+    device_index = find_usb_input_device()
+    if device_index is None:
+        print("No audio input device found.")
+        return
+
     audio = pyaudio.PyAudio()
     try:
         mic = audio.open(
             input=True,
+            input_device_index=device_index,
             frames_per_buffer=CHUNK_SIZE,
             channels=CHANNELS,
             format=FORMAT,
             rate=SAMPLE_RATE,
         )
+        print(f"Using mic at device index {device_index}.\n")
     except Exception as e:
         print(f"Failed to open microphone: {e}")
         print("Make sure a USB microphone or audio device is connected.")
