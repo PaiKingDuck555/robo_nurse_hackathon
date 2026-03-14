@@ -1,5 +1,5 @@
 sounddevice
 numpy
-websockets
+assemblyai
 deep-translator
 python-dotenv
