@@ -4,20 +4,18 @@ import json
 import tty
 import termios
 import threading
-import tempfile
-import wave
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 import sounddevice as sd
 import numpy as np
-import assemblyai as aai
+import websockets
 import asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
 
-API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
-aai.settings.api_key = API_KEY
+API_KEY = os.getenv("SMALLEST_API_KEY")
 SAMPLE_RATE = 44100
 TRANSCRIPT_FILE = os.path.join(os.path.dirname(__file__), "transcripts.json")
 
@@ -66,43 +64,59 @@ def wait_for_r():
 
 
 async def transcribe(pcm_data, language):
-    print(f"[API] Preparing audio for AssemblyAI...")
+    params = {
+        'language': language,
+        'encoding': 'linear16',
+        'sample_rate': str(SAMPLE_RATE),
+    }
+    ws_url = f"wss://api.smallest.ai/waves/v1/pulse/get_text?{urlencode(params)}"
+    print(f"[API] URL: {ws_url}")
 
-    tmp_path = None
+    transcript = ""
+    detected_lang = language
     try:
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
-            tmp_path = tmp.name
+        async with websockets.connect(
+            ws_url,
+            additional_headers={"Authorization": f"Bearer {API_KEY}"},
+        ) as ws:
+            print(f"[API] Connected")
 
-        with wave.open(tmp_path, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(SAMPLE_RATE)
-            wf.writeframes(pcm_data)
+            n_chunks = (len(pcm_data) + 4095) // 4096
+            for idx, i in enumerate(range(0, len(pcm_data), 4096)):
+                await ws.send(pcm_data[i:i+4096])
+                await asyncio.sleep(0.05)
+            print(f"[API] Sent {n_chunks} chunks")
 
-        print(f"[API] Uploading to AssemblyAI and transcribing...")
-        config = aai.TranscriptionConfig(language_code=language)
-        transcriber = aai.Transcriber()
+            await ws.send(json.dumps({"type": "finalize"}))
+            print(f"[API] Sent finalize, waiting for response...")
 
-        result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: transcriber.transcribe(tmp_path, config=config)
-        )
-
-        if result.status == aai.TranscriptStatus.error:
-            print(f"[API] ERROR: {result.error}")
-            return "", language
-
-        text = result.text or ""
-        detected_lang = language
-        print(f"[API] Done. transcript={repr(text[:100]) if text else 'EMPTY'}")
-        return text, detected_lang
+            msg_count = 0
+            try:
+                while True:
+                    msg = await asyncio.wait_for(ws.recv(), timeout=15)
+                    msg_count += 1
+                    data = json.loads(msg)
+                    text = data.get("transcript", "").strip()
+                    is_final = data.get("is_final", False)
+                    is_last = data.get("is_last", False)
+                    lang = data.get("language", "")
+                    print(f"[API] msg#{msg_count}: is_final={is_final} is_last={is_last} lang={lang} text={repr(text[:80])}")
+                    if lang:
+                        detected_lang = lang
+                    if text:
+                        transcript = data.get("full_transcript", text)
+                    if is_last:
+                        break
+            except asyncio.TimeoutError:
+                print(f"[API] TIMEOUT after {msg_count} messages (using best transcript so far)")
+            except websockets.exceptions.ConnectionClosed as e:
+                print(f"[API] CONNECTION CLOSED: {e}")
 
     except Exception as e:
         print(f"[API] ERROR: {type(e).__name__}: {e}")
-        return "", language
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+
+    print(f"[API] Done. transcript={repr(transcript[:100]) if transcript else 'EMPTY'}")
+    return transcript, detected_lang
 
 
 def save_transcript(text, language, duration):
@@ -170,7 +184,7 @@ async def record_once(mic_idx, language):
         return
     print(f"[MIC] Audio OK")
 
-    print(f"[API] Sending to AssemblyAI...")
+    print(f"[API] Connecting to smallest.ai...")
     transcript, detected_lang = await transcribe(pcm_data, language)
 
     if transcript:
